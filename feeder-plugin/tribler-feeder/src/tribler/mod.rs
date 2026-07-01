@@ -92,39 +92,11 @@ pub struct TriblerConfigFile {
 }
 
 impl TriblerConfigFile {
-    /// Parse the config from the env (first-boot seed). Tribler-connection from
-    /// `TRIBLER_*`; the enrichment TMDB key/language from `TMDB_TOKEN`
-    /// (or `PROWLARR_TMDB_TOKEN`) / `TMDB_LANGUAGE` — so an operator can still seed
-    /// them from env, while the dashboard form overrides at runtime.
-    pub fn from_env() -> Self {
-        let mut c = Self::default();
-        if let Ok(u) = std::env::var("META_CORE_URL") {
-            if !u.trim().is_empty() {
-                c.meta_core_url = Some(u.trim().to_string());
-            }
-        }
-        if let Ok(url) = std::env::var("TRIBLER_SIDECAR_URL") {
-            if !url.trim().is_empty() {
-                c.sidecar_url = Some(url);
-            }
-        }
-        if let Ok(key) = std::env::var("TRIBLER_API_KEY") {
-            if !key.trim().is_empty() {
-                c.api_key = Some(key);
-            }
-        }
-        if let Ok(t) = std::env::var("TMDB_TOKEN").or_else(|_| std::env::var("PROWLARR_TMDB_TOKEN")) {
-            if !t.trim().is_empty() {
-                c.tmdb_api_key = Some(t);
-            }
-        }
-        if let Ok(l) = std::env::var("TMDB_LANGUAGE") {
-            if !l.trim().is_empty() {
-                c.tmdb_language = Some(l);
-            }
-        }
-        c
-    }
+    // NOTE: `TriblerConfigFile::from_env()` was deliberately removed. Tribler
+    // config (sidecar URL, api key, tmdb token/language, meta-core URL) is
+    // dashboard config — it lives ONLY in the persisted config.json, never in
+    // env. (Was: TRIBLER_SIDECAR_URL / TRIBLER_API_KEY / TMDB_TOKEN /
+    // TMDB_LANGUAGE / META_CORE_URL — all now config-schema fields.)
 }
 
 /// HTTP timeout for the *synchronous* calls (local search, remote-search
@@ -223,9 +195,6 @@ pub struct TriblerPlugin {
     sidecar_url: String,
     api_key: Option<String>,
     cache: Option<MidhashCache>,
-    /// Env-derived config seed (set by `main` via [`set_seed_config`]).
-    /// `configure()` applies it when no persisted `config.json` exists.
-    seed_config: TriblerConfigFile,
     /// Effective config snapshot, exposed (redacted) through the SDK config
     /// plane for the dashboard's per-plugin config form.
     cfg: TriblerConfigFile,
@@ -261,7 +230,6 @@ impl TriblerPlugin {
             sidecar_url,
             api_key: None,
             cache: None,
-            seed_config: TriblerConfigFile::default(),
             cfg: TriblerConfigFile::default(),
             enricher: None,
             inline_tmdb: crate::enrich::Enricher::new(),
@@ -283,11 +251,8 @@ impl TriblerPlugin {
         self.api_key = Some(key);
     }
 
-    /// Install the env-derived seed config (applied by `configure()` when no
-    /// persisted `config.json` exists). Mirrors the torznab feeder.
-    pub fn set_seed_config(&mut self, cfg: TriblerConfigFile) {
-        self.seed_config = cfg;
-    }
+    // set_seed_config was removed: there is no env seed. config.json is the only
+    // config source (dashboard-written); apply_config takes it in configure().
 
     /// Apply an effective config: override sidecar URL / API key when present,
     /// otherwise keep the constructor defaults. Records the effective snapshot
@@ -829,10 +794,12 @@ impl FeederPlugin for TriblerPlugin {
         // plane when the operator saves through the dashboard) wins over the env
         // seed. Both are optional — tribler has working defaults, so a fully
         // unconfigured feeder still serves (DEFAULT_SIDECAR_URL, no auth key).
+        // config.json (dashboard-written) is the ONLY config source — no env
+        // seed. Absent → tribler's built-in defaults (DEFAULT_SIDECAR_URL, no key).
         let effective = std::fs::read(cache_dir.join("config.json"))
             .ok()
             .and_then(|b| serde_json::from_slice::<TriblerConfigFile>(&b).ok())
-            .unwrap_or_else(|| self.seed_config.clone());
+            .unwrap_or_default();
         self.apply_config(effective);
         self.cache = Some(common::open_midhash_cache(cache_dir, "tribler")?);
         // Build the enrichment driver: infra (META_CORE_URL + plugin URLs + peer
@@ -1448,7 +1415,6 @@ fn build_enricher(http: &reqwest::Client, cfg: &TriblerConfigFile) -> Option<Enr
         .as_ref()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
-        .or_else(|| EnrichmentConfig::from_env().map(|c| c.meta_core_url))
         .unwrap_or_else(|| meta_feeder_sdk::DEFAULT_META_CORE_URL.to_string());
     let mut ecfg = EnrichmentConfig::from_meta_core(meta_core_url);
     if let Some(k) = cfg.tmdb_api_key.as_ref().filter(|s| !s.trim().is_empty()) {

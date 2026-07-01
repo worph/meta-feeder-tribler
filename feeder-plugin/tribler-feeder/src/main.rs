@@ -7,12 +7,16 @@
 //! torrent-core TMDB catalog-discovery stack. Split out of `meta-feeder-torrent`
 //! so its dashboard config panel resolves to the tribler schema.
 //!
-//! Env (shared): `META_FEEDER_HTTP_LISTEN` (default `0.0.0.0:8080`),
-//! `META_FEEDER_STATE_DIR` (default `/data/meta-feeder`), `META_CORE_URL` (D4
-//! self-publish), `RUST_LOG`.
-//! Env (tribler source): `TRIBLER_SIDECAR_URL`, `TRIBLER_API_KEY`,
-//! `TMDB_TOKEN`/`TMDB_LANGUAGE`, plus the enrichment-plugin URLs
-//! (`FILENAME_PARSER_URL`, `TMDB_PLUGIN_URL`, `META_FEEDER_CALLBACK_URL`).
+//! ALL tribler config — sidecar URL, api key, tmdb token/language, meta-core
+//! URL — is read from the persisted `config.json` (dashboard-written) ONLY.
+//! There is NO env seed for these: a field in the dashboard config schema must
+//! not have an env var (config from JSON file / web UI is the single source of
+//! truth).
+//!
+//! Env (infra only): `META_FEEDER_HTTP_LISTEN` (default `0.0.0.0:8080`),
+//! `META_FEEDER_STATE_DIR` (default `/data/meta-feeder`), `META_GATEWAY_PEER_ID`,
+//! the enrichment-plugin URLs (`FILENAME_PARSER_URL`, `TMDB_PLUGIN_URL`,
+//! `META_FEEDER_CALLBACK_URL`), `RUST_LOG`.
 
 use std::net::SocketAddr;
 
@@ -21,7 +25,7 @@ use meta_feeder_sdk::serve_feeders;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
-use tribler_feeder::tribler::{TriblerConfigFile, TriblerPlugin};
+use tribler_feeder::tribler::TriblerPlugin;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -35,11 +39,10 @@ async fn main() -> anyhow::Result<()> {
     let state_dir =
         std::env::var("META_FEEDER_STATE_DIR").unwrap_or_else(|_| "/data/meta-feeder".to_string());
 
-    // Env is the first-boot seed; the persisted config.json (under the
-    // per-source cache dir) wins once saved through the dashboard. The tribler
-    // source builds its enrichment driver in configure().
-    let mut tr = TriblerPlugin::new();
-    tr.set_seed_config(TriblerConfigFile::from_env());
+    // No env seed: the plugin reads config.json in configure() (sidecar URL,
+    // api key, tmdb, meta-core URL) and builds its enrichment/self-publish
+    // driver from config.meta_core_url there.
+    let tr = TriblerPlugin::new();
 
     let plugins: Vec<Box<dyn FeederPlugin>> = vec![Box::new(tr)];
 
