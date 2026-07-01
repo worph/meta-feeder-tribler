@@ -1,0 +1,48 @@
+[package]
+name = "tribler-feeder"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+# Tribler feeder sidecar: bridges the decentralized Tribler (IPv8 overlay)
+# torrent network into the MetaMesh network. Split out of `meta-feeder-torrent`
+# so it is a single-plugin feeder (its dashboard config panel resolves cleanly,
+# unlike a multi-plugin feeder whose one /config surface can only expose one
+# plugin). Carries a copy of the shared "torrent-core" TMDB catalog-discovery
+# stack (the part that CANNOT be a container plugin — home-row browse has no
+# per-CID plugin equivalent); the librqbit BitTorrent fetch stays in
+# meta-feeder-torrent (tribler enumerates files via the Tribler core's metainfo,
+# not librqbit). Like every feeder it is meta-core-free + blockstore-free.
+
+[lib]
+name = "tribler_feeder"
+path = "src/lib.rs"
+
+[[bin]]
+name = "tribler-feeder"
+path = "src/main.rs"
+
+[dependencies]
+meta-feeder-sdk = { path = "../../crates/meta-feeder-sdk" }
+
+tokio = { version = "1.40", features = ["full"] }
+axum = { version = "0.7", features = ["json"] }
+anyhow = "1"
+async-trait = "0.1"
+thiserror = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", features = ["json", "rustls-tls", "stream"], default-features = false }
+bytes = "1"
+futures = "0.3"
+regex = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+
+[dev-dependencies]
+wiremock = "0.6"
+tempfile = "3"
+tokio = { version = "1.40", features = ["full", "test-util"] }
