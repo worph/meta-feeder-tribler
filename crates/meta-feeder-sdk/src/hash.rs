@@ -160,33 +160,71 @@ fn bt_file_cid(codec: u64, infohash: &[u8], file_index: u64) -> String {
     format!("b{}", base32_lower_no_padding(&wire))
 }
 
-/// Custom multicodec for a generic **Newznab release** locator (`nzb-release`).
-/// MetaMesh-private, adjacent to the torrent-file codecs (`0x1002` is taken by
-/// [`BTIH_V2_FILE_CODEC`]). It identifies an indexer *listing* (host + release
-/// id), so it is derivable at search time with **no `.nzb` download**. See
-/// `USENET-GATEWAY-STUDY.md` §13. (The v1 content-stable `nzb-posting` `0x1003`
-/// variant — `sha256(message-ids)` — was removed; only this one is emitted.)
-pub const NZB_RELEASE_CODEC: u64 = 0x1004;
+/// Custom multicodec for a self-describing **Newznab release** locator
+/// (`nzb-release`). MetaMesh-private, adjacent to the torrent-file codecs in the
+/// `0x10xx` range. Unlike a content hash, the cid *embeds* the indexer host +
+/// release id in an identity multihash, so the credentialed meta-share peer
+/// decodes `{host,id}` straight from the cid and grabs the `.nzb` via `t=get`
+/// only at playback — no side-table, no `.nzb` download at search time. (The
+/// `0x1004` `sha256(host‖id)` opaque hash and the `0x1003` `nzb-posting`
+/// variant were both removed; only this self-describing form is emitted.)
+pub const NZB_RELEASE_CODEC: u64 = 0x1005;
 
-/// Encode an `nzb-release` CID from a Newznab indexer's host + bare release id
-/// (the 32-hex `<guid>` id). `sha2-256(host ‖ "\n" ‖ id)` — host-namespaced so
-/// the same movie on two indexers (different postings) yields different cids.
-/// Deterministic + opaque, same wire house-style as the other locator codecs.
-pub fn compute_nzb_release_cid(host: &str, release_id: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(host.as_bytes());
-    hasher.update(b"\n");
-    hasher.update(release_id.as_bytes());
-    let digest: [u8; 32] = hasher.finalize().into();
+/// Digest byte ceiling for an `nzb-release` cid, matching meta-share's
+/// `MAX_MULTIHASH_SIZE` — its `CidGeneric<64>` rejects a longer multihash.
+const NZB_RELEASE_MAX_DIGEST: usize = 64;
 
-    // CIDv1: [version=0x01][codec varint][multihash code varint][len=0x20][digest]
-    let mut wire = Vec::with_capacity(1 + 4 + 1 + 32);
+/// Encode a self-describing `nzb-release` CID from a Newznab indexer's host +
+/// bare release id (the hex `<guid>` id). The multihash is *identity* (`0x00`)
+/// and its digest embeds the locator as `varint(host_len) ‖ host ‖ id_bytes`,
+/// where `id_bytes` is the hex-decoded id. meta-share's `decode_nzb_release_cid`
+/// is the exact inverse. Host-namespaced: the same release on two indexers
+/// yields different cids.
+///
+/// Returns `None` when the id isn't hex or the digest would overflow the
+/// multihash budget (an oversized host) — the caller drops that row.
+pub fn compute_nzb_release_cid(host: &str, release_id: &str) -> Option<String> {
+    let id_bytes = decode_hex_id(release_id)?;
+    let host_b = host.as_bytes();
+
+    // identity-multihash digest = varint(host_len) ‖ host ‖ id_bytes
+    let mut digest = Vec::with_capacity(2 + host_b.len() + id_bytes.len());
+    write_pb_varint(host_b.len() as u64, &mut digest);
+    digest.extend_from_slice(host_b);
+    digest.extend_from_slice(&id_bytes);
+    if digest.len() > NZB_RELEASE_MAX_DIGEST {
+        return None;
+    }
+
+    // CIDv1: [version=0x01][codec varint][mh code=0x00 identity][len varint][digest]
+    let mut wire = Vec::with_capacity(1 + 3 + 2 + digest.len());
     wire.push(0x01);
     write_pb_varint(NZB_RELEASE_CODEC, &mut wire);
-    write_pb_varint(NZB_RELEASE_CODEC, &mut wire);
-    wire.push(0x20);
+    wire.push(0x00); // multihash code: identity
+    write_pb_varint(digest.len() as u64, &mut wire);
     wire.extend_from_slice(&digest);
-    format!("b{}", base32_lower_no_padding(&wire))
+    Some(format!("b{}", base32_lower_no_padding(&wire)))
+}
+
+/// Hex-decode a Newznab release id. The guid parser only keeps hex runs, so the
+/// id is all-hex by construction; odd-length ids are left-padded with a `0`
+/// nibble. Returns `None` on any non-hex byte (defensive).
+fn decode_hex_id(id: &str) -> Option<Vec<u8>> {
+    let padded;
+    let s: &str = if id.len() % 2 == 1 {
+        padded = format!("0{id}");
+        &padded
+    } else {
+        id
+    };
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len() / 2);
+    for pair in bytes.chunks(2) {
+        let hi = (pair[0] as char).to_digit(16)?;
+        let lo = (pair[1] as char).to_digit(16)?;
+        out.push(((hi << 4) | lo) as u8);
+    }
+    Some(out)
 }
 
 /// Compute a standard IPFS CIDv1 over `bytes`. Output matches kubo's
@@ -477,26 +515,34 @@ mod tests {
 
     #[test]
     fn nzb_release_cid_wire_and_properties() {
-        let cid = compute_nzb_release_cid("api.nzb.life", "485c52f078b580667a01ac34a1cef6c2");
+        let cid =
+            compute_nzb_release_cid("api.nzb.life", "485c52f078b580667a01ac34a1cef6c2").unwrap();
         assert!(cid.starts_with('b'));
         // Deterministic.
         assert_eq!(
             cid,
-            compute_nzb_release_cid("api.nzb.life", "485c52f078b580667a01ac34a1cef6c2")
+            compute_nzb_release_cid("api.nzb.life", "485c52f078b580667a01ac34a1cef6c2").unwrap()
         );
         // Host-namespaced: same id, different host → different cid.
         assert_ne!(
             cid,
             compute_nzb_release_cid("api.nzbgeek.info", "485c52f078b580667a01ac34a1cef6c2")
+                .unwrap()
         );
-        // Explicit wire form: [01][84 20][84 20][20][sha256("host\nid")].
-        let digest: [u8; 32] =
-            Sha256::digest(b"api.nzb.life\n485c52f078b580667a01ac34a1cef6c2").into();
-        let mut want = vec![0x01, 0x84, 0x20, 0x84, 0x20, 0x20];
+        // Explicit self-describing wire form:
+        //   [01][85 20][00][len][varint(host_len) ‖ host ‖ hex-decoded id].
+        let mut digest = Vec::new();
+        write_pb_varint("api.nzb.life".len() as u64, &mut digest);
+        digest.extend_from_slice(b"api.nzb.life");
+        digest.extend_from_slice(&decode_hex_id("485c52f078b580667a01ac34a1cef6c2").unwrap());
+        let mut want = vec![0x01, 0x85, 0x20, 0x00];
+        write_pb_varint(digest.len() as u64, &mut want);
         want.extend_from_slice(&digest);
         assert_eq!(cid, format!("b{}", base32_lower_no_padding(&want)));
         // Distinct codec from the bt-file codecs in the 0x100x neighborhood.
         assert_ne!(cid, compute_bt_v1_file_cid(&[0xAB; 20], 0));
+        // An oversized host overflows the 64-byte digest budget → None.
+        assert!(compute_nzb_release_cid(&"h".repeat(80), "485c52f0").is_none());
     }
 
     #[test]

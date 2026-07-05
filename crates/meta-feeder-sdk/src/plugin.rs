@@ -58,9 +58,10 @@ pub struct HashOutcome {
 /// - `BtV1File` — a single file inside a BitTorrent v1 torrent, custom
 ///   multicodec `0x1001`. Locator, not content hash: opaque to bitswap.
 /// - `NzbRelease` — a Usenet release (a Newznab listing), custom multicodec
-///   `nzb-release` `0x1004`. Locator like `BtV1File`: opaque to bitswap,
-///   redeemed to bytes only by a credentialed meta-share peer, which grabs the
-///   `.nzb` via the `{base, id}` descriptor stored at `nzb:<cid>` KV.
+///   `nzb-release` `0x1005`. Self-describing locator: the cid embeds `{host,
+///   id}` in an identity multihash, opaque to bitswap and redeemed to bytes
+///   only by a credentialed meta-share peer, which decodes the locator from the
+///   cid and grabs the `.nzb` via `t=get` — no KV side-table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HashKind {
     /// Reserved: no feeder currently emits midhash256 outcomes, but the family
