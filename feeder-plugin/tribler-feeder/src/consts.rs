@@ -81,8 +81,8 @@ pub(crate) const TORRENT_RESOLVE_MAX_PER_INDEXER: usize = 30;
 /// it arrives until the gateway sends `Done`. (The 5 s `GATEWAY_CALL_TIMEOUT`
 /// is only the one-shot fallback for gateways that don't speak the streaming
 /// protocol.) So this can be generous: the binding constraint is meta-share's
-/// `SEARCH_TIMEOUT_SECS` silence window (set to match in the dev compose), not
-/// a hard call timeout. 5 min is a safety ceiling on a pathological page;
+/// `SEARCH_TIMEOUT_SECS` silence window (300 s, the meta-search code default),
+/// not a hard call timeout. 5 min is a safety ceiling on a pathological page;
 /// a normal XXX page (≤ `TORRENT_RESOLVE_MAX_PER_INDEXER` items at ~1.9 s
 /// each, 8-wide) finishes in well under 10 s and the gateway returns then.
 pub(crate) const TORRENT_RESOLVE_BUDGET: Duration = Duration::from_secs(300);
