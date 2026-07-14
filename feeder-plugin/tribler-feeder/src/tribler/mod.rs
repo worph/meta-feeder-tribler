@@ -601,10 +601,17 @@ impl TriblerPlugin {
         else {
             return vec![rec];
         };
+        // Stamp the per-file CID in both shapes: the `cids/<cid>` key-set member
+        // (what meta-share ingest and meta-watch's codec check actually read —
+        // legacy `cid_*` names are no longer tolerated) plus the named field, kept
+        // as an internal convergence key that the gateway's meta-core sink strips
+        // before the record is stored.
         let with_cid = move |mut r: DiscoveryRecord, idx: u64| -> DiscoveryRecord {
+            let cid = compute_bt_v1_file_cid(&ih20, idx);
+            r.fields.entry(format!("cids/{cid}")).or_insert_with(|| "true".to_string());
             r.fields
                 .entry("cid_btih_v1_file".to_string())
-                .or_insert_with(|| compute_bt_v1_file_cid(&ih20, idx));
+                .or_insert(cid);
             r
         };
         if is_obvious_single_file(&title) {
@@ -630,10 +637,10 @@ impl TriblerPlugin {
             .collect();
         let per_file = |f: &TorrentFile, force_episode: bool| {
             let mut r = build_file_record(&rec.fields, &rec.record_id, f);
-            r.fields.insert(
-                "cid_btih_v1_file".to_string(),
-                compute_bt_v1_file_cid(&ih20, f.index as u64),
-            );
+            let cid = compute_bt_v1_file_cid(&ih20, f.index as u64);
+            // Key-set member first — it is the shape consumers read.
+            r.fields.insert(format!("cids/{cid}"), "true".to_string());
+            r.fields.insert("cid_btih_v1_file".to_string(), cid);
             if force_episode {
                 // A multi-video pack is a TV season — force the kind so enrichment
                 // resolves the show as TV (the show title drives the TMDB search).
