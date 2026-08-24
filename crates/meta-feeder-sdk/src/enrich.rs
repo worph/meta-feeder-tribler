@@ -107,7 +107,7 @@ impl EnrichmentConfig {
             filename_parser_url: env_nonempty("FILENAME_PARSER_URL")
                 .or_else(|| derive_sidecar_url("filename-parser")),
             tmdb_url: env_nonempty("TMDB_PLUGIN_URL").or_else(|| derive_sidecar_url("tmdb")),
-            tmdb_token: env_nonempty("TMDB_TOKEN").or_else(|| env_nonempty("PROWLARR_TMDB_TOKEN")),
+            tmdb_token: env_nonempty("TMDB_TOKEN").or_else(|| env_nonempty("TORZNAB_TMDB_TOKEN")),
             tmdb_language: env_nonempty("TMDB_LANGUAGE").unwrap_or_else(|| "en-US".to_string()),
             gateway_peer: env_nonempty("META_GATEWAY_PEER_ID")
                 .or_else(|| env_nonempty("HOSTNAME"))

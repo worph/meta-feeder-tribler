@@ -41,7 +41,7 @@ use serde_json::Value;
 use tracing::{info, warn};
 
 use crate::config::{self, CONFIG_PAGE_HTML};
-use crate::plugin::{stamp_default_source, ConfigError, FeederPlugin, HashKind, HashOutcome};
+use crate::plugin::{ConfigError, FeederPlugin, HashKind, HashOutcome};
 use crate::query::{GatewayQuery, GatewaySearchEvent, GatewayWireError};
 use crate::types::{DiscoveryRecord, GatewayError, PluginHealth};
 
@@ -55,6 +55,9 @@ pub enum HashKindDto {
     Sha2_256,
     BtV1File,
     NzbRelease,
+    CardLocator,
+    NzbPosting,
+    YtVideo,
 }
 
 impl From<HashKind> for HashKindDto {
@@ -64,6 +67,9 @@ impl From<HashKind> for HashKindDto {
             HashKind::Sha2_256 => HashKindDto::Sha2_256,
             HashKind::BtV1File => HashKindDto::BtV1File,
             HashKind::NzbRelease => HashKindDto::NzbRelease,
+            HashKind::CardLocator => HashKindDto::CardLocator,
+            HashKind::NzbPosting => HashKindDto::NzbPosting,
+            HashKind::YtVideo => HashKindDto::YtVideo,
         }
     }
 }
@@ -75,6 +81,9 @@ impl From<HashKindDto> for HashKind {
             HashKindDto::Sha2_256 => HashKind::Sha2_256,
             HashKindDto::BtV1File => HashKind::BtV1File,
             HashKindDto::NzbRelease => HashKind::NzbRelease,
+            HashKindDto::CardLocator => HashKind::CardLocator,
+            HashKindDto::NzbPosting => HashKind::NzbPosting,
+            HashKindDto::YtVideo => HashKind::YtVideo,
         }
     }
 }
@@ -275,13 +284,10 @@ async fn query(
     Json(req): Json<QueryRequest>,
 ) -> Result<Json<QueryResponse>, Response> {
     let plugin = state.plugin(&req.upstream_id)?;
-    let mut records = plugin
+    let records = plugin
         .handle_query(&req.query, req.max_results as usize)
         .await
         .map_err(gateway_error_response)?;
-    for r in &mut records {
-        stamp_default_source(&mut r.fields, &req.upstream_id);
-    }
     Ok(Json(QueryResponse { records }))
 }
 
@@ -305,18 +311,6 @@ async fn query_stream(
         .handle_query_stream(&req.query, req.max_results as usize)
         .await
         .map_err(gateway_error_response)?;
-    // Stamp the default provenance member on each streamed `Base` record (a
-    // no-op when the plugin already carries a finer `source/*`, e.g. torznab's
-    // per-indexer label). `EnrichPatch`/`Drop`/`Done` frames pass through: the
-    // base they refer to was already stamped.
-    let upstream_id = req.upstream_id.clone();
-    let events = events.map(move |ev| match ev {
-        GatewaySearchEvent::Base(mut rec) => {
-            stamp_default_source(&mut rec.fields, &upstream_id);
-            GatewaySearchEvent::Base(rec)
-        }
-        other => other,
-    });
     let body = events.map(|ev| {
         // Serialization of GatewaySearchEvent is infallible in practice; on the
         // off chance it fails, terminate with an Error line so the consumer sees
@@ -342,15 +336,10 @@ async fn compute(
     Json(req): Json<ComputeRequest>,
 ) -> Result<Json<ComputeResponse>, Response> {
     let plugin = state.plugin(&req.upstream_id)?;
-    let mut outcomes = plugin
+    let outcomes = plugin
         .compute_outcomes(&req.record_id)
         .await
         .map_err(gateway_error_response)?;
-    for o in &mut outcomes {
-        if let Some(rec) = o.record.as_mut() {
-            stamp_default_source(&mut rec.fields, &req.upstream_id);
-        }
-    }
     Ok(Json(ComputeResponse {
         outcomes: outcomes.into_iter().map(OutcomeDto::from_outcome).collect(),
     }))
