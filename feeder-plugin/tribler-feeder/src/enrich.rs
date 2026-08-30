@@ -548,6 +548,7 @@ fn build_stub_patch(f: &BTreeMap<String, String>) -> Option<EnrichOutcome> {
         set.insert("fileType".to_string(), "video".to_string());
         set.insert("videoType".to_string(), "movie".to_string());
         set.insert("contentKind".to_string(), "movie".to_string());
+        set.insert("domain".to_string(), "film".to_string());
     }
     if !has_poster {
         // Non-resolvable marker — the image 404s (broken tile), but the card
@@ -773,6 +774,10 @@ async fn build_enrichment_patch(
     match matched_kind {
         TmdbKind::Movie => {
             set.insert("contentKind".to_string(), "movie".to_string());
+            // The routing axis moves with the kind: a TMDB movie match is
+            // `domain=film`, and reconciling the kind without the domain would
+            // leave the record routed as a series.
+            set.insert("domain".to_string(), "film".to_string());
             // Co-write the narrower `videoType` facet (METADATA_KEYS.md §14.11
             // — contentKind=movie ↔ videoType=movie). Overwrites any
             // category-derived videoType from `into_discovery_record` with the
@@ -784,6 +789,7 @@ async fn build_enrichment_patch(
         }
         TmdbKind::Tv => {
             set.insert("contentKind".to_string(), "episode".to_string());
+            set.insert("domain".to_string(), "tv".to_string());
             // contentKind=episode ↔ videoType=tvshow (METADATA_KEYS.md §14.11).
             set.insert("videoType".to_string(), "tvshow".to_string());
             // Season/episode boundary validation. Only a parsed `season`

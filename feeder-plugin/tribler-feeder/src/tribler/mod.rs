@@ -530,6 +530,9 @@ impl TriblerPlugin {
                 "movie"
             };
             rec.fields.insert("contentKind".to_string(), kind.to_string());
+            if let Some(d) = meta_feeder_sdk::domain::domain_for_content_kind(kind) {
+                rec.fields.insert("domain".to_string(), d.to_string());
+            }
         }
         // For episode records, stamp the *parsed* season/episode so the consumer
         // renders a proper series with an ordered episode list (meta-watch keys
@@ -646,6 +649,7 @@ impl TriblerPlugin {
                 // resolves the show as TV (the show title drives the TMDB search).
                 r.fields
                     .insert("contentKind".to_string(), "episode".to_string());
+                r.fields.insert("domain".to_string(), "tv".to_string());
             }
             r
         };

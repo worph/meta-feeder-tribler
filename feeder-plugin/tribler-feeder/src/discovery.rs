@@ -178,6 +178,12 @@ fn build_seed_record(
     // mode marker, contentKind, and optionally anime.
     fields.insert(mode.marker().to_string(), "true".to_string());
     fields.insert("contentKind".to_string(), content_kind.to_string());
+    // The routing axis, co-written with the kind it derives from
+    // (METADATA_KEYS.md §1): `fileType` says what the bytes are, `domain` says
+    // which app wants the record.
+    if let Some(d) = meta_feeder_sdk::domain::domain_for_content_kind(content_kind) {
+        fields.insert("domain".to_string(), d.to_string());
+    }
     fields.insert("fileType".to_string(), "video".to_string());
     if anime {
         fields.insert("anime".to_string(), "true".to_string());
