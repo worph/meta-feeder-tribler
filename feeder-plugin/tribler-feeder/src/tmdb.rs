@@ -397,8 +397,8 @@ pub(crate) struct TmdbSearchItem {
     #[serde(default)]
     pub(crate) genre_ids: Vec<u32>,
     /// ISO 639-1 (2-letter) language the title was originally produced in.
-    /// Mapped to `lang3` and used to file `original_title` under
-    /// `titles/{lang3}` (METADATA_KEYS.md §3).
+    /// Mapped to `lang3` and used to file `original_title` as a
+    /// `titles/{lang3}/{name}` member (METADATA_KEYS.md §3).
     #[serde(default)]
     pub(crate) original_language: Option<String>,
 }
@@ -438,8 +438,8 @@ impl TmdbSearchItem {
 /// Map an ISO 639-1 (2-letter) code to its ISO 639-3 (`lang3`) equivalent,
 /// matching the store's convention (`eng`, `jpn`, `fra`; the 639-2/T variant
 /// where B/T differ, e.g. `deu` not `ger`). Covers the languages TMDB
-/// commonly returns; unknown codes return `None` so the caller skips the
-/// `titles/{lang3}` write rather than persisting a non-`lang3` key.
+/// commonly returns; unknown codes return `None` so the caller files the name under `und`
+/// rather than persisting a non-`lang3` key.
 pub(crate) fn iso639_1_to_3(code: &str) -> Option<&'static str> {
     Some(match code.to_ascii_lowercase().as_str() {
         "en" => "eng",
@@ -504,10 +504,51 @@ pub(crate) struct TmdbHit {
 impl TmdbHit {
     /// TMDB `original_language` (ISO 639-1) mapped to the store's `lang3`
     /// (ISO 639-3), or `None` when the language is outside the common set or
-    /// absent. Used to file `original_title` under `titles/{lang3}` (§3).
+    /// absent. Used to file `original_title` under `titles/{lang3}/{name}` (§3).
     pub(crate) fn original_lang3(&self) -> Option<&'static str> {
         iso639_1_to_3(self.original_language.as_deref()?.trim())
     }
+}
+
+/// The language TMDB's `name`/`title` is written in. Every request goes out
+/// without a `language` param, so TMDB answers in its default, en-US.
+pub(crate) const METADATA_LANG3: &str = "eng";
+
+/// The `titles/{lang3}/{name}` key-set member for `name` (METADATA_KEYS.md), or
+/// `None` when it normalises to empty: trimmed, whitespace runs collapsed,
+/// case/diacritics/`%` verbatim, and `/` (the key-set separator) written as
+/// U+2215 `∕`.
+///
+/// CROSS-BINARY CONTRACT: the indexer feeder's `tmdb.rs::title_member_key` and
+/// the card feeder's `tmdb_client.rs::title_member_key` write the same shape;
+/// two peers must produce the same key for one name.
+pub(crate) fn title_member_key(lang3: &str, name: &str) -> Option<String> {
+    let name = name.split_whitespace().collect::<Vec<_>>().join(" ");
+    if name.is_empty() {
+        return None;
+    }
+    Some(format!("titles/{lang3}/{}", name.replace('/', "\u{2215}")))
+}
+
+/// The `titles/{lang3}/{name}` members this feeder files from a TMDB hit: its
+/// title and original title (a search hit carries no AKAs). The original goes
+/// under its `original_language` (`und` when unmapped); the title under
+/// [`METADATA_LANG3`] **unless it equals the original** — TMDB falls back to
+/// the original name when it has no en-US translation, so `3%` is
+/// `titles/por/3%` only, not also an English name. Same rule as the indexer
+/// feeder's `tmdb_title_member_keys`.
+pub(crate) fn tmdb_title_member_keys(hit: &TmdbHit) -> Vec<String> {
+    let norm = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut keys = Vec::new();
+    let original = hit.original_title.as_deref().map(norm).filter(|o| !o.is_empty());
+    if let Some(o) = &original {
+        keys.extend(title_member_key(hit.original_lang3().unwrap_or("und"), o));
+    }
+    let title = norm(&hit.title);
+    if title != "(untitled)" && original.as_deref() != Some(title.as_str()) {
+        keys.extend(title_member_key(METADATA_LANG3, &title));
+    }
+    keys
 }
 
 /// Authoritative TV structure from `GET /3/tv/{id}`, used to bounds-check
@@ -847,5 +888,40 @@ mod season_bounds_tests {
         let d = details(4, &[(1, 26), (2, 13), (3, 13), (4, 12)]);
         assert_eq!(season_episode_bounds(&d, Some(1), Some(27)), SeasonEpisodeBounds::Contradiction);
         assert_eq!(season_episode_bounds(&d, Some(-1), None), SeasonEpisodeBounds::Contradiction);
+    }
+}
+
+#[cfg(test)]
+mod title_member_tests {
+    use super::*;
+
+    fn hit(title: &str, orig: Option<&str>, lang: Option<&str>) -> TmdbHit {
+        TmdbHit {
+            tmdbid: 1,
+            title: title.to_string(),
+            original_title: orig.map(str::to_string),
+            original_language: lang.map(str::to_string),
+            overview: None,
+            year: None,
+            poster_path: None,
+            genre_ids: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn title_and_original_are_filed_as_language_nested_members() {
+        assert_eq!(
+            tmdb_title_member_keys(&hit("Naruto", Some("ナルト"), Some("ja"))),
+            vec!["titles/jpn/ナルト", "titles/eng/Naruto"]
+        );
+        // Title == original (no en-US translation) is filed once.
+        assert_eq!(tmdb_title_member_keys(&hit("3%", Some("3%"), Some("pt"))), vec!["titles/por/3%"]);
+        // Unmapped language → und; `/` → U+2215; TMDB's placeholder is not a name.
+        assert_eq!(
+            tmdb_title_member_keys(&hit("(untitled)", Some("Fate/Zero"), Some("xx"))),
+            vec!["titles/und/Fate\u{2215}Zero"]
+        );
+        assert_eq!(title_member_key("eng", "  3   Percent "), Some("titles/eng/3 Percent".to_string()));
+        assert_eq!(title_member_key("eng", "   "), None);
     }
 }

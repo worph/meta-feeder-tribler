@@ -13,8 +13,8 @@ use tracing::{debug, warn};
 
 use crate::title::clean_torrent_title;
 use crate::tmdb::{
-    principal_top_n, season_episode_bounds, SeasonEpisodeBounds, TmdbCall, TmdbClient,
-    TmdbExternalIds, TmdbHit, TmdbKind, TmdbTvDetails,
+    principal_top_n, season_episode_bounds, tmdb_title_member_keys, SeasonEpisodeBounds, TmdbCall,
+    TmdbClient, TmdbExternalIds, TmdbHit, TmdbKind, TmdbTvDetails,
 };
 use crate::tmdb_budget::TmdbBudget;
 use meta_feeder_sdk::cache::MidhashCache;
@@ -669,7 +669,7 @@ async fn compute_enrichment_inner(
         Some(resolved) => resolved,
         None => return EnrichOutcome::Noop,
     };
-    build_enrichment_patch(record, enricher, hit, matched_kind, raw_title).await
+    build_enrichment_patch(record, enricher, hit, matched_kind).await
 }
 
 /// Pick the canonical TMDB entry for `record`. Prefers the **anchored** path —
@@ -722,35 +722,32 @@ async fn resolve_enrichment_hit(
 /// content-kind reconciliation (movie clears bogus season/episode; tv normalises
 /// to `episode` and bounds-checks the parsed season/episode — an out-of-bounds
 /// verdict drops the record), and the transient `posterPath` the poster store
-/// consumes. `raw_title` is preserved as `originalTitle`.
+/// consumes. The raw release string is never copied into a title key — it
+/// stays in `fileName`.
 async fn build_enrichment_patch(
     record: &DiscoveryRecord,
     enricher: &TmdbEnricher,
     hit: TmdbHit,
     matched_kind: TmdbKind,
-    raw_title: Option<String>,
 ) -> EnrichOutcome {
     let mut set: BTreeMap<String, String> = BTreeMap::new();
     let mut remove: Vec<String> = Vec::new();
     set.insert("title".to_string(), hit.title.clone());
-    // Preserve the raw tracker release title (quality tags / release-group
-    // info) in `originalTitle`. This is the canonical home now that the
-    // bespoke `releaseTitle` key is retired — reuse-before-invent
-    // (METADATA_KEYS.md rule #1, §14.10 title sprawl).
-    if let Some(raw_title) = raw_title {
-        set.insert("originalTitle".to_string(), raw_title);
-    }
-    // TMDB's original-language title (e.g. "ナルト") is a genuine localized
-    // title — file it under the namespaced `titles/{lang3}` (METADATA_KEYS.md
-    // §3), keyed by TMDB's `original_language`, instead of clobbering
-    // `originalTitle`. Skipped when the language is outside the common 639-1
-    // set or the title is blank (originalTitle still carries the raw title).
+    // The raw tracker release string is NOT stored here — it is emitted as
+    // `fileName` at ingest (METADATA_KEYS.md §1). `originalTitle` carries TMDB's
+    // *original-language* title (e.g. "ナルト" / "Sousou no Frieren"), clean —
+    // never the release string.
     if let Some(orig) = hit.original_title.clone() {
         if !orig.trim().is_empty() {
-            if let Some(lang3) = hit.original_lang3() {
-                set.insert(format!("titles/{lang3}"), orig);
-            }
+            set.insert("originalTitle".to_string(), orig);
         }
+    }
+    // Whoever writes `title`/`originalTitle` also files them as members of the
+    // language-nested `titles/{lang3}/{name}` key-set (METADATA_KEYS.md): the
+    // original under TMDB's `original_language` (`und` when unmapped), the title
+    // under `eng` when it differs from the original.
+    for key in tmdb_title_member_keys(&hit) {
+        set.insert(key, "true".to_string());
     }
     if let Some(o) = hit.overview.clone() {
         if !o.trim().is_empty() {
