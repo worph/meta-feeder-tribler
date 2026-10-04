@@ -2,8 +2,8 @@
 # =============================================================================
 # tribler-feeder — Tribler (IPv8 overlay) feeder sidecar. Multi-stage build.
 #
-# Build context must be this repo root (packages/plugins/meta-feeder-tribler) so
-# the `meta-feeder-sdk` path dependency resolves. Same BuildKit cache-mount
+# Build context must be this repo root (packages/plugins/meta-feeder-tribler).
+# `meta-feeder-sdk` is a git dependency pinned by tag. Same BuildKit cache-mount
 # strategy as the other feeders. No librqbit here (tribler enumerates files via
 # the Tribler core's metainfo), so the cold build is lighter than the torrent
 # feeder's.
@@ -20,7 +20,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
-COPY crates/ crates/
 COPY feeder-plugin/ feeder-plugin/
 
 RUN --mount=type=cache,id=cargo-registry,target=/usr/local/cargo/registry \

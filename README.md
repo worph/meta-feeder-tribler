@@ -44,7 +44,7 @@ goes to the meta-core configured in the dashboard.
 
 A feeder is a stateless HTTP sidecar. The gateway registers it as a remote
 feeder plugin pointing at its `/` and drives the SDK contract
-([`meta_feeder_sdk::serve_feeders`](crates/meta-feeder-sdk/src/serve.rs)):
+([`meta_feeder_sdk::serve_feeders`](https://github.com/worph/meta-feeder-sdk/blob/main/src/serve.rs)):
 
 | Endpoint | Purpose |
 |----------|---------|
