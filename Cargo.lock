@@ -788,8 +788,8 @@ checksum = "88904434abc2901f197fe8cc55f0445e7ded921dba5911dad2e2b39b48e663c4"
 
 [[package]]
 name = "meta-feeder-sdk"
-version = "1.7.0"
-source = "git+https://github.com/worph/meta-feeder-sdk?tag=v1.7.0#027917c8cffe7ca43dadcf3b426cc5f69ecc443a"
+version = "1.9.0"
+source = "git+https://github.com/worph/meta-feeder-sdk?tag=v1.9.0#01cc4e15a5284c9f3de1b2758ecee1679b002026"
 dependencies = [
  "anyhow",
  "async-trait",

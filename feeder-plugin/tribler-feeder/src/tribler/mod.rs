@@ -49,6 +49,7 @@ use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 use meta_feeder_sdk::common;
+use meta_feeder_sdk::live::{now_secs, LIVE_AT, LIVE_LEECHERS, LIVE_SEEDERS};
 use self::metainfo::TorrentFile;
 use meta_feeder_sdk::cache::MidhashCache;
 use meta_feeder_sdk::enrich::{EnrichTarget, EnrichmentConfig, Enricher};
@@ -1105,7 +1106,7 @@ const LOCAL_CANDIDATE_FLOOR: usize = 100;
 /// Seeder count for health ranking (0 when absent / unparseable).
 fn seeders_of(rec: &DiscoveryRecord) -> i64 {
     rec.fields
-        .get("seeders")
+        .get(LIVE_SEEDERS)
         .and_then(|s| s.parse::<i64>().ok())
         .unwrap_or(0)
 }
@@ -1384,11 +1385,18 @@ fn into_discovery_record(item: TriblerItem) -> Option<DiscoveryRecord> {
     if let Some(size) = item.size {
         fields.insert("sizeByte".to_string(), size.to_string());
     }
+    // Swarm counters are search-wire-transient: `live/*`, never the bare
+    // spelling this feeder wrote before SDK 1.9.0 (rule #4 — they were being
+    // frozen into the hash by the self-publish path). Every persist path,
+    // including this feeder's own `FeederStore::publish`, strips the family.
     if let Some(s) = item.num_seeders {
-        fields.insert("seeders".to_string(), s.to_string());
+        fields.insert(LIVE_SEEDERS.to_string(), s.to_string());
     }
     if let Some(l) = item.num_leechers {
-        fields.insert("leechers".to_string(), l.to_string());
+        fields.insert(LIVE_LEECHERS.to_string(), l.to_string());
+    }
+    if item.num_seeders.is_some() || item.num_leechers.is_some() {
+        fields.insert(LIVE_AT.to_string(), now_secs());
     }
     if let Some(cat) = item.category.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
         // Coarse classification as a registry `categories/{name}` key-set member
@@ -1561,6 +1569,11 @@ mod tests {
             );
         }
         assert!(!rec.fields.keys().any(|k| k.starts_with("languages/")));
+        // Swarm counters ride the wire as `live/*`, never the bare spelling.
+        assert_eq!(rec.fields.get("live/seeders").map(String::as_str), Some("42"));
+        assert_eq!(rec.fields.get("live/leechers").map(String::as_str), Some("3"));
+        assert!(rec.fields.contains_key("live/at"));
+        assert!(!rec.fields.contains_key("seeders") && !rec.fields.contains_key("leechers"));
         // Category → registry key-set member, not the old flat `triblerCategory`.
         assert_eq!(
             rec.fields.get("categories/Video").map(String::as_str),
